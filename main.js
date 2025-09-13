@@ -168,6 +168,21 @@ function getProjectionMatrix(fx, fy, width, height) {
     ].flat();
 }
 
+function getMeshProjectionMatrix(fx, fy, width, height) {
+    const znear = 0.2;
+    const zfar = 200;
+    const aspect = width / height;
+    const fov = 2 * Math.atan(height / (2 * fy));
+    
+    const f = 1 / Math.tan(fov / 2);
+    return [
+        f / aspect, 0, 0, 0,
+        0, f, 0, 0,
+        0, 0, (zfar + znear) / (znear - zfar), -1,
+        0, 0, (2 * zfar * znear) / (znear - zfar), 0
+    ];
+}
+
 function getViewMatrix(camera) {
     const R = camera.rotation.flat();
     const t = camera.position;
@@ -183,6 +198,23 @@ function getViewMatrix(camera) {
         ],
     ].flat();
     return camToWorld;
+}
+
+function getMeshViewMatrix(camera) {
+    // For mesh rendering, we need a proper world-to-camera view matrix
+    const R = camera.rotation.flat();
+    const t = camera.position;
+    
+    // Create world-to-camera view matrix
+    return [
+        R[0], R[3], R[6], 0,
+        R[1], R[4], R[7], 0,
+        R[2], R[5], R[8], 0,
+        -(t[0] * R[0] + t[1] * R[1] + t[2] * R[2]),
+        -(t[0] * R[3] + t[1] * R[4] + t[2] * R[5]),
+        -(t[0] * R[6] + t[1] * R[7] + t[2] * R[8]),
+        1
+    ];
 }
 // function translate4(a, x, y, z) {
 //     return [
@@ -463,6 +495,14 @@ function createWorker(self) {
         for (let i = 0; i < vertexCount; i++)
             depthIndex[starts0[sizeList[i]]++] = i;
 
+        depthIndex = depthIndex.reverse();
+
+
+        
+        // change to back-to-front
+        // for (let i = 0; i < vertexCount; i++)
+        //         depthIndex[--counts0[sizeList[i]] + starts0[sizeList[i]]] = i;
+
         console.timeEnd("sort");
 
         lastProj = viewProj;
@@ -705,10 +745,11 @@ void main () {
     vPosition = position;
 
     vec2 vCenter = vec2(pos2d) / pos2d.w;
+    float depth = pos2d.z / pos2d.w;
     gl_Position = vec4(
         vCenter
         + position.x * majorAxis / viewport
-        + position.y * minorAxis / viewport, 0.0, 1.0);
+        + position.y * minorAxis / viewport, depth, 1.0);
 
 }
 `.trim();
@@ -725,8 +766,63 @@ out vec4 fragColor;
 void main () {
     float A = -dot(vPosition, vPosition);
     if (A < -4.0) discard;
-    float B = exp(A) * vColor.a;
+    float B = exp(A) * (vColor.a);
     fragColor = vec4(B * vColor.rgb, B);
+}
+
+`.trim();
+
+// mesh shader
+const meshVertexShaderSource = `
+#version 300 es
+precision highp float;
+
+in vec3 aPosition;
+in vec3 aNormal;
+in vec3 aColor;
+
+uniform mat4 uProjectionMatrix;
+uniform mat4 uViewMatrix;
+uniform mat4 uModelMatrix;
+
+out vec3 vNormal;
+out vec3 vColor;
+
+vec3 linear_to_srgb(vec3 c){
+  bvec3 m = lessThanEqual(c, vec3(0.0031308));
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(c, vec3(1.0/2.4)) - 0.055;
+  return mix(hi, lo, vec3(m));
+}
+
+
+void main() {
+    vNormal = mat3(uModelMatrix) * aNormal;
+    // vColor = aColor;
+    vColor = linear_to_srgb(aColor);
+    gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(aPosition, 1.0);
+}
+`.trim();
+
+const meshFragmentShaderSource = `
+#version 300 es
+precision mediump float;
+
+in vec3 vNormal;
+in vec3 vColor;
+out vec4 fragColor;
+
+void main() {
+    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
+    float diff = max(dot(normalize(vNormal), lightDir), 0.0);
+    
+    // Combine vertex color with lighting
+    vec3 diffuseColor = vColor * diff;
+    vec3 ambientColor = vColor * 0.3; // ambient lighting
+    // vec3 finalColor = diffuseColor + ambientColor;
+    vec3 finalColor = vColor;
+    
+    fragColor = vec4(finalColor, 1.0);
 }
 
 `.trim();
@@ -736,34 +832,73 @@ let defaultViewMatrix = [
     0.03, 6.55, 1,
 ];
 let viewMatrix = defaultViewMatrix;
+
+// helper: createProgram and Shader
+function createProgram(gl, vsSource, fsSource) {
+  const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
+  const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error("Program link failed: ", gl.getProgramInfoLog(program));
+    return null;
+  }
+  return program;
+}
+function createShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.error("Shader compile failed: ", gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
+
+// helper: parsePLY (mesh)
+import * as THREE from "three";
+import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
+
 async function main() {
+    // Scene configurations
+    const scenes = {
+        playroom: {
+            splat: "hybrid_data/playroom.splat",
+            mesh: "hybrid_data/playroommesh.ply"
+        },
+        dtu24: {
+            splat: "hybrid_data/dtu24.splat", 
+            mesh: "hybrid_data/dtu24mesh.ply"
+        }
+    };
+    
+    let currentScene = "dtu24"; // default scene
+    
     let carousel = true;
     const params = new URLSearchParams(location.search);
     try {
         viewMatrix = JSON.parse(decodeURIComponent(location.hash.slice(1)));
         carousel = false;
     } catch (err) {}
-    const url = new URL(
-        // "nike.splat",
-        // location.href,
-        params.get("url") || "train.splat",
-        "https://huggingface.co/cakewalk/splat-data/resolve/main/",
-    );
-    const req = await fetch(url, {
-        mode: "cors", // no-cors, *cors, same-origin
-        credentials: "omit", // include, *same-origin, omit
-    });
-    console.log(req);
-    if (req.status != 200)
-        throw new Error(req.status + " Unable to load " + req.url);
+    // const url = new URL(
+    //     // "nike.splat",
+    //     // location.href,
+    //     params.get("url") || "train.splat",
+    //     "https://huggingface.co/cakewalk/splat-data/resolve/main/",
+    // );
 
+    // Remove original splat loading - will be handled by loadScene()
+    // const url = new URL(params.get("url") || scenes[currentScene].splat, location.href);
+    // const req = await fetch(url, { mode: "cors", credentials: "omit" });
+    
     const rowLength = 3 * 4 + 3 * 4 + 4 + 4;
-    const reader = req.body.getReader();
-    let splatData = new Uint8Array(req.headers.get("content-length"));
-
-    const downsample =
-        splatData.length / rowLength > 500000 ? 1 : 1 / devicePixelRatio;
-    console.log(splatData.length / rowLength, downsample);
+    
+    const downsample = 1 / devicePixelRatio; // Will be updated when scene loads
+    console.log("Initial downsample:", downsample);
 
     const worker = new Worker(
         URL.createObjectURL(
@@ -773,14 +908,47 @@ async function main() {
         ),
     );
 
+    // Mesh data storage
+    let meshData = null;
+    
+    // Display control variables
+    let showMesh = true;
+    let showSplats = true;
+    
+    // Variables for file loading
+    let stopLoading = false;
+    let splatData = new Uint8Array(0); // Initialize to empty array to avoid null errors
+
+
     const canvas = document.getElementById("canvas");
     const fps = document.getElementById("fps");
     const camid = document.getElementById("camid");
+    
+    // Setup display control toggles
+    const showMeshToggle = document.getElementById("showMesh");
+    const showSplatsToggle = document.getElementById("showSplats");
+    const sceneSelect = document.getElementById("sceneSelect");
+    
+    showMeshToggle.addEventListener("change", (e) => {
+        showMesh = e.target.checked;
+    });
+    
+    showSplatsToggle.addEventListener("change", (e) => {
+        showSplats = e.target.checked;
+    });
+    
+    sceneSelect.addEventListener("change", (e) => {
+        loadScene(e.target.value);
+    });
+    
+    // Set initial dropdown value
+    sceneSelect.value = currentScene;
 
     let projectionMatrix;
 
     const gl = canvas.getContext("webgl2", {
         antialias: false,
+        depth: true,
     });
 
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
@@ -800,6 +968,9 @@ async function main() {
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
     gl.useProgram(program);
+
+    const meshProgram = createProgram(gl, meshVertexShaderSource, meshFragmentShaderSource);
+
 
     if (!gl.getProgramParameter(program, gl.LINK_STATUS))
         console.error(gl.getProgramInfoLog(program));
@@ -826,10 +997,25 @@ async function main() {
     const vertexBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, triangleVertices, gl.STATIC_DRAW);
+    
+    const indexBuffer = gl.createBuffer();
+
+    // Create VAO for splat rendering
+    const splatVAO = gl.createVertexArray();
+    gl.bindVertexArray(splatVAO);
+    
     const a_position = gl.getAttribLocation(program, "position");
     gl.enableVertexAttribArray(a_position);
     gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
     gl.vertexAttribPointer(a_position, 2, gl.FLOAT, false, 0, 0);
+
+    const a_index = gl.getAttribLocation(program, "index");
+    gl.enableVertexAttribArray(a_index);
+    gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
+    gl.vertexAttribIPointer(a_index, 1, gl.INT, false, 0, 0);
+    gl.vertexAttribDivisor(a_index, 1);
+    
+    gl.bindVertexArray(null); // Unbind VAO
 
     var texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -837,12 +1023,220 @@ async function main() {
     var u_textureLocation = gl.getUniformLocation(program, "u_texture");
     gl.uniform1i(u_textureLocation, 0);
 
-    const indexBuffer = gl.createBuffer();
-    const a_index = gl.getAttribLocation(program, "index");
-    gl.enableVertexAttribArray(a_index);
-    gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
-    gl.vertexAttribIPointer(a_index, 1, gl.INT, false, 0, 0);
-    gl.vertexAttribDivisor(a_index, 1);
+    // Function to load a new scene
+    async function loadScene(sceneName) {
+        if (!scenes[sceneName]) {
+            console.error("Scene not found:", sceneName);
+            return;
+        }
+        
+        const rowLength = 3 * 4 + 3 * 4 + 4 + 4;
+        const isPly = (splatData) =>
+            splatData[0] == 112 &&
+            splatData[1] == 108 &&
+            splatData[2] == 121 &&
+            splatData[3] == 10;
+        
+        currentScene = sceneName;
+        console.log("Loading scene:", sceneName);
+        
+        // Show loading indicator
+        document.getElementById("spinner").style.display = "";
+        document.getElementById("message").innerText = `Loading ${sceneName}...`;
+        
+        // Reset mesh data
+        meshData = null;
+        
+        try {
+            // Load new splat file
+            const splatUrl = new URL(scenes[sceneName].splat, location.href);
+            const splatReq = await fetch(splatUrl, {
+                mode: "cors",
+                credentials: "omit",
+            });
+            
+            if (splatReq.status !== 200) {
+                throw new Error(`${splatReq.status} Unable to load ${splatReq.url}`);
+            }
+            
+            const newSplatData = new Uint8Array(await splatReq.arrayBuffer());
+            
+            // Update global splatData for progress tracking
+            splatData = newSplatData;
+            
+            if (isPly(newSplatData)) {
+                worker.postMessage({ ply: newSplatData.buffer, save: false });
+            } else {
+                worker.postMessage({
+                    buffer: newSplatData.buffer,
+                    vertexCount: Math.floor(newSplatData.byteLength / rowLength),
+                });
+            }
+            
+            // Load new mesh
+            loader.load(
+                scenes[sceneName].mesh,
+                (geometry) => {
+                    console.log("Loading mesh for", sceneName);
+                    setupMesh(geometry);
+                },
+                undefined,
+                (error) => {
+                    console.error("Error loading mesh for", sceneName, ":", error);
+                }
+            );
+            
+            // Clear loading message
+            document.getElementById("message").innerText = "";
+            
+        } catch (error) {
+            console.error("Error loading scene:", error);
+            document.getElementById("message").innerText = `Error loading ${sceneName}: ${error.message}`;
+        }
+    }
+    
+    // Function to setup mesh (extracted from the original mesh loading code)
+    function setupMesh(geometry) {
+            console.log("Loading mesh...");
+            console.log("Available attributes:", Object.keys(geometry.attributes));
+            
+            const positions = geometry.attributes.position.array;
+            let normals = geometry.attributes.normal ? geometry.attributes.normal.array : null;
+            let colors = null;
+            
+            // Check for vertex colors - PLY files might have 'color' or individual 'red', 'green', 'blue' attributes
+            if (geometry.attributes.color) {
+                colors = geometry.attributes.color.array;
+                console.log("Found vertex colors (color attribute)");
+            } else if (geometry.attributes.red && geometry.attributes.green && geometry.attributes.blue) {
+                // Combine RGB attributes into a single color array
+                const red = geometry.attributes.red.array;
+                const green = geometry.attributes.green.array;
+                const blue = geometry.attributes.blue.array;
+                colors = new Float32Array(positions.length); // RGB, same length as positions
+                
+                for (let i = 0; i < red.length; i++) {
+                    colors[i * 3] = red[i] / 255.0;     // R
+                    colors[i * 3 + 1] = green[i] / 255.0; // G  
+                    colors[i * 3 + 2] = blue[i] / 255.0;   // B
+                }
+                console.log("Found vertex colors (separate R,G,B attributes)");
+            } else {
+                // Generate default colors (light gray)
+                colors = new Float32Array(positions.length);
+                for (let i = 0; i < colors.length; i += 3) {
+                    colors[i] = 0.8;     // R
+                    colors[i + 1] = 0.8; // G  
+                    colors[i + 2] = 0.8; // B
+                }
+                console.log("Generated default vertex colors");
+            }
+            
+            const indices = geometry.index ? geometry.index.array : null;
+            
+            // Generate simple normals if none exist
+            if (!normals) {
+                normals = new Float32Array(positions.length);
+                for (let i = 0; i < normals.length; i += 3) {
+                    normals[i] = 0;     // x
+                    normals[i + 1] = 0; // y  
+                    normals[i + 2] = 1; // z (pointing up)
+                }
+                console.log("Generated default normals for mesh");
+            }
+            
+            console.log("Mesh - Vertices:", positions.length / 3, "Indices:", indices ? indices.length : 0);
+            console.log("Has normals:", !!normals, "Has colors:", !!colors);
+            
+            // Create buffers
+            const positionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+            
+            let normalBuffer = null;
+            if (normals) {
+                normalBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+            }
+            
+            let colorBuffer = null;
+            if (colors) {
+                colorBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+            }
+            
+            let meshIndexBuffer = null;
+            if (indices) {
+                meshIndexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshIndexBuffer);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(indices), gl.STATIC_DRAW);
+            }
+            
+            // Get uniform locations for mesh program
+            const u_meshProjection = gl.getUniformLocation(meshProgram, "uProjectionMatrix");
+            const u_meshView = gl.getUniformLocation(meshProgram, "uViewMatrix");
+            const u_meshModel = gl.getUniformLocation(meshProgram, "uModelMatrix");
+            
+            // Create VAO for mesh
+            const meshVAO = gl.createVertexArray();
+            gl.bindVertexArray(meshVAO);
+            
+            // Set up position attribute
+            const positionLocation = gl.getAttribLocation(meshProgram, "aPosition");
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.enableVertexAttribArray(positionLocation);
+            gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
+            
+            // Set up normal attribute if available
+            const normalLocation = gl.getAttribLocation(meshProgram, "aNormal");
+            if (normalBuffer && normalLocation >= 0) {
+                gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+                gl.enableVertexAttribArray(normalLocation);
+                gl.vertexAttribPointer(normalLocation, 3, gl.FLOAT, false, 0, 0);
+            }
+            
+            // Set up color attribute if available
+            const colorLocation = gl.getAttribLocation(meshProgram, "aColor");
+            if (colorBuffer && colorLocation >= 0) {
+                gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+                gl.enableVertexAttribArray(colorLocation);
+                gl.vertexAttribPointer(colorLocation, 3, gl.FLOAT, false, 0, 0);
+            }
+            
+            // Bind index buffer
+            if (meshIndexBuffer) {
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshIndexBuffer);
+            }
+            
+            gl.bindVertexArray(null); // Unbind VAO
+            
+            // Store mesh data for rendering
+            meshData = {
+                program: meshProgram,
+                vao: meshVAO,
+                positionBuffer,
+                normalBuffer,
+                colorBuffer,
+                indexBuffer: meshIndexBuffer,
+                vertexCount: positions.length / 3,
+                indexCount: indices ? indices.length : 0,
+                uniforms: {
+                    projection: u_meshProjection,
+                    view: u_meshView,
+                    model: u_meshModel
+                }
+            };
+            
+            console.log("Mesh loaded successfully");
+    }
+    
+    // Initialize mesh loading after WebGL context is ready
+    const loader = new PLYLoader();
+    
+    // Load initial scene
+    loadScene(currentScene);
 
     const resize = () => {
         gl.uniform2fv(u_focal, new Float32Array([camera.fx, camera.fy]));
@@ -1357,17 +1751,84 @@ async function main() {
 
         if (vertexCount > 0) {
             document.getElementById("spinner").style.display = "none";
-            gl.uniformMatrix4fv(u_view, false, actualViewMatrix);
-            gl.clear(gl.COLOR_BUFFER_BIT);
-            gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, vertexCount);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            
+            // Enable depth testing for both mesh and splats
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.LESS);
+            gl.depthMask(true);
+            
+            // First pass: Render opaque mesh to establish depth buffer
+            if (meshData && showMesh) {
+                gl.disable(gl.BLEND);
+                
+                gl.useProgram(meshData.program);
+                
+                // Set uniforms - use the same projection matrix as splats for consistency
+                gl.uniformMatrix4fv(meshData.uniforms.projection, false, projectionMatrix);
+                gl.uniformMatrix4fv(meshData.uniforms.view, false, actualViewMatrix);
+                
+                // Identity model matrix for now
+                const modelMatrix = [
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                ];
+                gl.uniformMatrix4fv(meshData.uniforms.model, false, modelMatrix);
+                
+                // Use mesh VAO
+                gl.bindVertexArray(meshData.vao);
+                
+                // Render
+                if (meshData.indexBuffer) {
+                    gl.drawElements(gl.TRIANGLES, meshData.indexCount, gl.UNSIGNED_INT, 0);
+                } else {
+                    gl.drawArrays(gl.TRIANGLES, 0, meshData.vertexCount);
+                }
+                
+                gl.bindVertexArray(null);
+            }
+            
+            // Second pass: Render splats with proper depth testing
+            if (showSplats) {
+                gl.enable(gl.BLEND);
+                gl.depthMask(false); // Don't write to depth buffer for splats (they're transparent)
+                // gl.blendFuncSeparate(
+                //     gl.ONE_MINUS_DST_ALPHA,
+                //     gl.ONE,
+                //     gl.ONE_MINUS_DST_ALPHA,
+                //     gl.ONE,
+                // );
+
+                gl.blendFuncSeparate(
+                    gl.ONE,           // src RGB factor
+                    gl.ONE_MINUS_SRC_ALPHA, // dst RGB factor  
+                    gl.ONE,                 // src alpha factor
+                    gl.ONE_MINUS_SRC_ALPHA  // dst alpha factor
+                );
+                
+                gl.useProgram(program);
+                gl.uniformMatrix4fv(u_view, false, actualViewMatrix);
+                gl.bindVertexArray(splatVAO);
+                gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, vertexCount);
+                gl.bindVertexArray(null);
+            }
+            
+            // Restore state
+            gl.depthMask(true);
         } else {
             gl.clear(gl.COLOR_BUFFER_BIT);
             document.getElementById("spinner").style.display = "";
             start = Date.now() + 2000;
         }
-        const progress = (100 * vertexCount) / (splatData.length / rowLength);
-        if (progress < 100) {
-            document.getElementById("progress").style.width = progress + "%";
+        if (splatData.length > 0) {
+            const progress = (100 * vertexCount) / (splatData.length / rowLength);
+            if (progress < 100) {
+                document.getElementById("progress").style.width = progress + "%";
+            } else {
+                document.getElementById("progress").style.display = "none";
+            }
         } else {
             document.getElementById("progress").style.display = "none";
         }
@@ -1444,41 +1905,12 @@ async function main() {
         selectFile(e.dataTransfer.files[0]);
     });
 
-    let bytesRead = 0;
-    let lastVertexCount = -1;
-    let stopLoading = false;
-
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done || stopLoading) break;
-
-        splatData.set(value, bytesRead);
-        bytesRead += value.length;
-
-        if (vertexCount > lastVertexCount) {
-            if (!isPly(splatData)) {
-                worker.postMessage({
-                    buffer: splatData.buffer,
-                    vertexCount: Math.floor(bytesRead / rowLength),
-                });
-            }
-            lastVertexCount = vertexCount;
-        }
-    }
-    if (!stopLoading) {
-        if (isPly(splatData)) {
-            // ply file magic header means it should be handled differently
-            worker.postMessage({ ply: splatData.buffer, save: false });
-        } else {
-            worker.postMessage({
-                buffer: splatData.buffer,
-                vertexCount: Math.floor(bytesRead / rowLength),
-            });
-        }
-    }
+    // Original splat loading code removed - now handled by loadScene()
+    // The scene loading is initiated in loadScene(currentScene) call above
 }
 
 main().catch((err) => {
+    console.error(err); // for debug
     document.getElementById("spinner").style.display = "none";
     document.getElementById("message").innerText = err.toString();
 });
