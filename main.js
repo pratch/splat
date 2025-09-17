@@ -785,8 +785,9 @@ uniform mat4 uProjectionMatrix;
 uniform mat4 uViewMatrix;
 uniform mat4 uModelMatrix;
 
-out vec3 vNormal;
+flat out vec3 vNormal;  // flat interpolation preserves triangle normal
 out vec3 vColor;
+out vec3 vWorldPos;
 
 vec3 linear_to_srgb(vec3 c){
   bvec3 m = lessThanEqual(c, vec3(0.0031308));
@@ -800,6 +801,11 @@ void main() {
     vNormal = mat3(uModelMatrix) * aNormal;
     // vColor = aColor;
     vColor = linear_to_srgb(aColor);
+    // vColor = linear_to_srgb(aNormal); // visualize normals as vert color
+
+    vec4 worldPos = uModelMatrix * vec4(aPosition, 1.0);
+    vWorldPos = worldPos.xyz;
+
     gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(aPosition, 1.0);
 }
 `.trim();
@@ -808,8 +814,11 @@ const meshFragmentShaderSource = `
 #version 300 es
 precision mediump float;
 
-in vec3 vNormal;
+flat in vec3 vNormal;
 in vec3 vColor;
+in vec3 vWorldPos;
+uniform vec3 uCameraPos;  // camera world-space position
+
 out vec4 fragColor;
 
 void main() {
@@ -817,10 +826,18 @@ void main() {
     float diff = max(dot(normalize(vNormal), lightDir), 0.0);
     
     // Combine vertex color with lighting
-    vec3 diffuseColor = vColor * diff;
-    vec3 ambientColor = vColor * 0.3; // ambient lighting
+    // vec3 diffuseColor = vColor * diff;
+    // vec3 ambientColor = vColor * 0.3; // ambient lighting
     // vec3 finalColor = diffuseColor + ambientColor;
-    vec3 finalColor = vColor;
+
+    // vec3 finalColor = vColor;
+    // vec3 finalColor = normalize(vNormal) * 0.5 + 0.5; // visualize normals as color
+    // vec3 finalColor = normalize(uCameraPos - vWorldPos) * 0.5 + 0.5; // visualize view direction as color
+
+    vec3 viewdir = normalize(uCameraPos - vWorldPos);
+    float norm_v_cross_n = length(cross(viewdir, normalize(vNormal)));
+    float visibility = exp(-100.0 * (norm_v_cross_n-1.0) * (norm_v_cross_n-1.0));
+    vec3 finalColor = vec3(visibility); 
     
     fragColor = vec4(finalColor, 1.0);
 }
@@ -1100,7 +1117,7 @@ async function main() {
             console.log("Loading mesh...");
             console.log("Available attributes:", Object.keys(geometry.attributes));
             
-            const positions = geometry.attributes.position.array;
+            let positions = geometry.attributes.position.array;
             let normals = geometry.attributes.normal ? geometry.attributes.normal.array : null;
             let colors = null;
             
@@ -1132,17 +1149,73 @@ async function main() {
                 console.log("Generated default vertex colors");
             }
             
-            const indices = geometry.index ? geometry.index.array : null;
+            let indices = geometry.index ? geometry.index.array : null;
             
-            // Generate simple normals if none exist
+            // Generate normals if none exist
             if (!normals) {
-                normals = new Float32Array(positions.length);
-                for (let i = 0; i < normals.length; i += 3) {
-                    normals[i] = 0;     // x
-                    normals[i + 1] = 0; // y  
-                    normals[i + 2] = 1; // z (pointing up)
+                const triangleCount = indices.length / 3;
+
+                // Create expanded arrays for positions, colors, and normals
+                const expandedPositions = new Float32Array(triangleCount * 9); // 3 vertices × 3 coords
+                const expandedColors = new Float32Array(triangleCount * 9);
+                const expandedNormals = new Float32Array(triangleCount * 9);
+                
+                for (let i = 0; i < triangleCount; i++) { // for each triangle
+                    const i0 = indices[i * 3];
+                    const i1 = indices[i * 3 + 1];
+                    const i2 = indices[i * 3 + 2];
+                    
+                    // Get triangle vertices
+                    const v0 = [positions[i0 * 3], positions[i0 * 3 + 1], positions[i0 * 3 + 2]];
+                    const v1 = [positions[i1 * 3], positions[i1 * 3 + 1], positions[i1 * 3 + 2]];
+                    const v2 = [positions[i2 * 3], positions[i2 * 3 + 1], positions[i2 * 3 + 2]];
+                    
+                    // Compute triangle normal
+                    const edge1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+                    const edge2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+                    const normal = [
+                        edge1[1] * edge2[2] - edge1[2] * edge2[1],
+                        edge1[2] * edge2[0] - edge1[0] * edge2[2],
+                        edge1[0] * edge2[1] - edge1[1] * edge2[0]
+                    ];
+                    
+                    // Normalize
+                    const length = Math.sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+                    if (length > 0) {
+                        normal[0] /= length;
+                        normal[1] /= length;
+                        normal[2] /= length;
+                    }
+                    
+                    // Store expanded data for all 3 vertices of this triangle
+                    for (let j = 0; j < 3; j++) {
+                        const vertexIndex = j === 0 ? i0 : j === 1 ? i1 : i2;
+                        const outputIndex = i * 9 + j * 3;
+                        
+                        // Copy position
+                        expandedPositions[outputIndex] = positions[vertexIndex * 3];
+                        expandedPositions[outputIndex + 1] = positions[vertexIndex * 3 + 1];
+                        expandedPositions[outputIndex + 2] = positions[vertexIndex * 3 + 2];
+                        
+                        // Copy color
+                        expandedColors[outputIndex] = colors[vertexIndex * 3];
+                        expandedColors[outputIndex + 1] = colors[vertexIndex * 3 + 1];
+                        expandedColors[outputIndex + 2] = colors[vertexIndex * 3 + 2];
+                        
+                        // Same triangle normal for all 3 vertices
+                        expandedNormals[outputIndex] = normal[0];
+                        expandedNormals[outputIndex + 1] = normal[1];
+                        expandedNormals[outputIndex + 2] = normal[2];
+                    }
                 }
-                console.log("Generated default normals for mesh");
+                
+                // Replace original arrays with expanded ones
+                positions = expandedPositions;
+                colors = expandedColors;
+                normals = expandedNormals;
+                indices = null; // No longer use indices - we'll render directly
+                
+                console.log("Generated triangle normals for mesh, num triangles:", triangleCount);
             }
             
             console.log("Mesh - Vertices:", positions.length / 3, "Indices:", indices ? indices.length : 0);
@@ -1178,6 +1251,7 @@ async function main() {
             const u_meshProjection = gl.getUniformLocation(meshProgram, "uProjectionMatrix");
             const u_meshView = gl.getUniformLocation(meshProgram, "uViewMatrix");
             const u_meshModel = gl.getUniformLocation(meshProgram, "uModelMatrix");
+            const u_meshCameraPos = gl.getUniformLocation(meshProgram, "uCameraPos");
             
             // Create VAO for mesh
             const meshVAO = gl.createVertexArray();
@@ -1225,7 +1299,8 @@ async function main() {
                 uniforms: {
                     projection: u_meshProjection,
                     view: u_meshView,
-                    model: u_meshModel
+                    model: u_meshModel,
+                    cameraPos: u_meshCameraPos
                 }
             };
             
@@ -1573,6 +1648,15 @@ async function main() {
 
     let leftGamepadTrigger, rightGamepadTrigger;
 
+
+    // Function to extract camera world position from view matrix
+    function getCameraWorldPosition(viewMatrix) {
+        // The view matrix transforms from world space to camera space
+        // Camera world position is the translation part of the inverse view matrix
+        const invView = invert4(viewMatrix);
+        return [invView[12], invView[13], invView[14]];
+    }
+
     const frame = (now) => {
         let inv = invert4(viewMatrix);
         let shiftKey =
@@ -1776,6 +1860,10 @@ async function main() {
                     0, 0, 0, 1
                 ];
                 gl.uniformMatrix4fv(meshData.uniforms.model, false, modelMatrix);
+
+                // Extract and pass camera world position
+                const cameraWorldPos = getCameraWorldPosition(viewMatrix);
+                gl.uniform3fv(meshData.uniforms.cameraPos, cameraWorldPos);
                 
                 // Use mesh VAO
                 gl.bindVertexArray(meshData.vao);
