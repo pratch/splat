@@ -748,15 +748,26 @@ void main () {
     vec2 screenPos = (vec2(pos2d) / pos2d.w) * 0.5 + 0.5;
     float edgeVisibility = texture(u_edgeVisibilityTexture, screenPos).r;
 
-    // Discard splats below edge visibility threshold
-    if (edgeVisibility < u_edgeVisibilityThreshold) {
+    // Hard cutoff for visibility below threshold (gradual fade in/out starting at 0.5 * threshold)
+    // Discard splats below hard cutoff
+    float hardCutoff = u_edgeVisibilityThreshold * 0.5; 
+    if (edgeVisibility < hardCutoff) {
         gl_Position = vec4(0.0, 0.0, 2.0, 1.0); // Move outside clip space
         return;
     }
-    
-    // Apply edge visibility to alpha
+
+    // Smooth transition zone between hardCutoff and threshold 
+    float transitionFactor = smoothstep(hardCutoff, u_edgeVisibilityThreshold, edgeVisibility);
+
+    // Apply both edge visibility and transition factor to alpha
+    float alphaMultiplier = edgeVisibility * transitionFactor;
+
+    // Clamp alphaMultiplier based on influence
+    alphaMultiplier = mix(1.0, alphaMultiplier, u_edgeVisibilityInfluence);
+
+    // Apply alpha multiplier to original alpha
     float originalAlpha = float((cov.w >> 24) & 0xffu) / 255.0;
-    float modifiedAlpha = originalAlpha * mix(1.0, edgeVisibility, u_edgeVisibilityInfluence);
+    float modifiedAlpha = originalAlpha * alphaMultiplier;
 
     // vColor = clamp(pos2d.z/pos2d.w+1.0, 0.0, 1.0) * vec4((cov.w) & 0xffu, (cov.w >> 8) & 0xffu, (cov.w >> 16) & 0xffu, (cov.w >> 24) & 0xffu) / 255.0;
     vColor = clamp(pos2d.z/pos2d.w+1.0, 0.0, 1.0) * vec4((cov.w) & 0xffu, (cov.w >> 8) & 0xffu, (cov.w >> 16) & 0xffu, modifiedAlpha * 255.0) / 255.0;
