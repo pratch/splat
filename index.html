@@ -359,6 +359,10 @@ other
 				<select id="sceneSelect" style="margin-left: 10px; padding: 4px; border-radius: 4px; background: #333; color: white; border: 1px solid #555;">
 					<option value="playroom">Playroom</option>
 					<option value="dtu24">DTU24</option>
+					<option value="fox">Fox</option>
+					<option value="lion1">Lion 1</option>
+					<option value="lion2">Lion 2</option>
+					<option value="lion3">Lion 3</option>
 				</select>
 			</div>
 			<h4 style="margin-top: 15px;">Display</h4>
@@ -376,6 +380,29 @@ other
 					<span class="slider"></span>
 				</div>
 			</div>
+			<h4>Mesh Options</h4>
+			<div class="control-item">
+				<label for="meshVisualizationMode">Mode</label>
+				<select id="meshVisualizationMode" style="margin-left: 10px; padding: 4px; border-radius: 4px; background: #333; color: white; border: 1px solid #555;">
+					<option value="0" selected>Color</option>
+					<option value="1">Normal</option>
+					<option value="2">Visibility</option>
+					<option value="3">Solid</option>
+				</select>
+			</div>
+			<div>
+				<label>
+					Visibility Influence: <input type="range" id="visibilityInfluence" min="0" max="1" step="0.1" value="1">
+					<span id="visibilityValue">1.0</span>
+				</label>
+			</div>
+			<div>
+				<label for="visibilityThreshold">
+					Visibility Threshold: <input type="range" id="visibilityThreshold" min="0" max="1" step="0.01" value="0.1">
+					<span id="thresholdValue">0.10</span>
+				</label>
+			</div>
+				
 		</div>
 		
 		<script type="module" src="main.js"></script>
