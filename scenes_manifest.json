@@ -1,0 +1,195 @@
+{
+  "generatedAt": "2025-12-21T07:06:54.383Z",
+  "dataDir": "pgsr_data",
+  "scenes": {
+    "aomlion_lion1": {
+      "dataset": "aomlion",
+      "sceneName": "lion1",
+      "displayName": "aomlion - lion1",
+      "splat": "gs_aomlion_lion1.splat",
+      "mesh": "mesh_aomlion_lion1.ply"
+    },
+    "aomlion_lion2": {
+      "dataset": "aomlion",
+      "sceneName": "lion2",
+      "displayName": "aomlion - lion2",
+      "splat": "gs_aomlion_lion2.splat",
+      "mesh": "mesh_aomlion_lion2.ply"
+    },
+    "aomlion_lion3": {
+      "dataset": "aomlion",
+      "sceneName": "lion3",
+      "displayName": "aomlion - lion3",
+      "splat": "gs_aomlion_lion3.splat",
+      "mesh": "mesh_aomlion_lion3.ply"
+    },
+    "deepblend_playroom": {
+      "dataset": "deepblend",
+      "sceneName": "playroom",
+      "displayName": "deepblend - playroom",
+      "splat": "gs_deepblend_playroom.splat",
+      "mesh": "mesh_deepblend_playroom.ply"
+    },
+    "dtu_dtu-scan105": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan105",
+      "displayName": "dtu - dtu-scan105",
+      "splat": "gs_dtu_dtu-scan105.splat",
+      "mesh": "mesh_dtu_dtu-scan105.ply"
+    },
+    "dtu_dtu-scan106": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan106",
+      "displayName": "dtu - dtu-scan106",
+      "splat": "gs_dtu_dtu-scan106.splat",
+      "mesh": "mesh_dtu_dtu-scan106.ply"
+    },
+    "dtu_dtu-scan110": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan110",
+      "displayName": "dtu - dtu-scan110",
+      "splat": "gs_dtu_dtu-scan110.splat",
+      "mesh": "mesh_dtu_dtu-scan110.ply"
+    },
+    "dtu_dtu-scan114": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan114",
+      "displayName": "dtu - dtu-scan114",
+      "splat": "gs_dtu_dtu-scan114.splat",
+      "mesh": "mesh_dtu_dtu-scan114.ply"
+    },
+    "dtu_dtu-scan118": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan118",
+      "displayName": "dtu - dtu-scan118",
+      "splat": "gs_dtu_dtu-scan118.splat",
+      "mesh": "mesh_dtu_dtu-scan118.ply"
+    },
+    "dtu_dtu-scan122": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan122",
+      "displayName": "dtu - dtu-scan122",
+      "splat": "gs_dtu_dtu-scan122.splat",
+      "mesh": "mesh_dtu_dtu-scan122.ply"
+    },
+    "dtu_dtu-scan24": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan24",
+      "displayName": "dtu - dtu-scan24",
+      "splat": "gs_dtu_dtu-scan24.splat",
+      "mesh": "mesh_dtu_dtu-scan24.ply"
+    },
+    "dtu_dtu-scan37": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan37",
+      "displayName": "dtu - dtu-scan37",
+      "splat": "gs_dtu_dtu-scan37.splat",
+      "mesh": "mesh_dtu_dtu-scan37.ply"
+    },
+    "dtu_dtu-scan40": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan40",
+      "displayName": "dtu - dtu-scan40",
+      "splat": "gs_dtu_dtu-scan40.splat",
+      "mesh": "mesh_dtu_dtu-scan40.ply"
+    },
+    "dtu_dtu-scan55": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan55",
+      "displayName": "dtu - dtu-scan55",
+      "splat": "gs_dtu_dtu-scan55.splat",
+      "mesh": "mesh_dtu_dtu-scan55.ply"
+    },
+    "dtu_dtu-scan63": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan63",
+      "displayName": "dtu - dtu-scan63",
+      "splat": "gs_dtu_dtu-scan63.splat",
+      "mesh": "mesh_dtu_dtu-scan63.ply"
+    },
+    "dtu_dtu-scan65": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan65",
+      "displayName": "dtu - dtu-scan65",
+      "splat": "gs_dtu_dtu-scan65.splat",
+      "mesh": "mesh_dtu_dtu-scan65.ply"
+    },
+    "dtu_dtu-scan69": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan69",
+      "displayName": "dtu - dtu-scan69",
+      "splat": "gs_dtu_dtu-scan69.splat",
+      "mesh": "mesh_dtu_dtu-scan69.ply"
+    },
+    "dtu_dtu-scan83": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan83",
+      "displayName": "dtu - dtu-scan83",
+      "splat": "gs_dtu_dtu-scan83.splat",
+      "mesh": "mesh_dtu_dtu-scan83.ply"
+    },
+    "dtu_dtu-scan97": {
+      "dataset": "dtu",
+      "sceneName": "dtu-scan97",
+      "displayName": "dtu - dtu-scan97",
+      "splat": "gs_dtu_dtu-scan97.splat",
+      "mesh": "mesh_dtu_dtu-scan97.ply"
+    },
+    "instantngp_fox": {
+      "dataset": "instantngp",
+      "sceneName": "fox",
+      "displayName": "instantngp - fox",
+      "splat": "gs_instantngp_fox.splat",
+      "mesh": "mesh_instantngp_fox.ply"
+    },
+    "mip360_bicycle": {
+      "dataset": "mip360",
+      "sceneName": "bicycle",
+      "displayName": "mip360 - bicycle",
+      "splat": "gs_mip360_bicycle.splat",
+      "mesh": "mesh_mip360_bicycle.ply"
+    },
+    "mip360_bonsai": {
+      "dataset": "mip360",
+      "sceneName": "bonsai",
+      "displayName": "mip360 - bonsai",
+      "splat": "gs_mip360_bonsai.splat",
+      "mesh": "mesh_mip360_bonsai.ply"
+    },
+    "mip360_counter": {
+      "dataset": "mip360",
+      "sceneName": "counter",
+      "displayName": "mip360 - counter",
+      "splat": "gs_mip360_counter.splat",
+      "mesh": "mesh_mip360_counter.ply"
+    },
+    "mip360_garden": {
+      "dataset": "mip360",
+      "sceneName": "garden",
+      "displayName": "mip360 - garden",
+      "splat": "gs_mip360_garden.splat",
+      "mesh": "mesh_mip360_garden.ply"
+    },
+    "mip360_kitchen": {
+      "dataset": "mip360",
+      "sceneName": "kitchen",
+      "displayName": "mip360 - kitchen",
+      "splat": "gs_mip360_kitchen.splat",
+      "mesh": "mesh_mip360_kitchen.ply"
+    },
+    "mip360_room": {
+      "dataset": "mip360",
+      "sceneName": "room",
+      "displayName": "mip360 - room",
+      "splat": "gs_mip360_room.splat",
+      "mesh": "mesh_mip360_room.ply"
+    },
+    "mip360_stump": {
+      "dataset": "mip360",
+      "sceneName": "stump",
+      "displayName": "mip360 - stump",
+      "splat": "gs_mip360_stump.splat",
+      "mesh": "mesh_mip360_stump.ply"
+    }
+  }
+}

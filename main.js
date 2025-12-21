@@ -1001,35 +1001,65 @@ import * as THREE from "three";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 
 async function main() {
-    // Scene configurations
-    const scenes = {
-        playroom: {
-            splat: "hybrid_data/playroom.splat",
-            mesh: "hybrid_data/playroommesh.ply"
-        },
-        dtu24: {
-            splat: "hybrid_data/dtu24.splat", 
-            mesh: "hybrid_data/dtu24mesh.ply"
-        },
-        fox: {
-            splat: "hybrid_data/fox.splat", 
-            mesh: "hybrid_data/fox.ply"
-        },
-        lion1: {
-            splat: "hybrid_data/lion1.splat", 
-            mesh: "hybrid_data/lion1mesh.ply"
-        },
-        lion2: {
-            splat: "hybrid_data/lion2.splat", 
-            mesh: "hybrid_data/lion2mesh.ply"
-        },
-        lion3: {
-            splat: "hybrid_data/lion3.splat", 
-            mesh: "hybrid_data/lion3mesh.ply"
-        }
-    };
+    // Load scenes manifest dynamically
+    let scenesManifest = null;
+    let scenes = {};
     
-    let currentScene = "dtu24"; // default scene
+    try {
+        const manifestResponse = await fetch('scenes_manifest.json');
+        scenesManifest = await manifestResponse.json();
+        
+        // Convert manifest to scenes object - only include scenes with .splat files
+        for (const [key, sceneData] of Object.entries(scenesManifest.scenes)) {
+            // Only include scenes that have a .splat file (not just .ply)
+            if (sceneData.splat) {
+                scenes[key] = {
+                    splat: `${scenesManifest.dataDir}/${sceneData.splat}`,
+                    mesh: `${scenesManifest.dataDir}/${sceneData.mesh}`,
+                    displayName: sceneData.displayName
+                };
+            }
+        }
+        
+        console.log(`Loaded ${Object.keys(scenes).length} scenes from manifest`);
+    } catch (error) {
+        console.error('Failed to load scenes manifest, using fallback scenes:', error);
+        // Fallback to hardcoded scenes if manifest fails
+        scenes = {
+            playroom: {
+                splat: "hybrid_data/playroom.splat",
+                mesh: "hybrid_data/playroommesh.ply",
+                displayName: "Playroom"
+            },
+            dtu24: {
+                splat: "hybrid_data/dtu24.splat", 
+                mesh: "hybrid_data/dtu24mesh.ply",
+                displayName: "DTU24"
+            },
+            fox: {
+                splat: "hybrid_data/fox.splat", 
+                mesh: "hybrid_data/fox.ply",
+                displayName: "Fox"
+            },
+            lion1: {
+                splat: "hybrid_data/lion1.splat", 
+                mesh: "hybrid_data/lion1mesh.ply",
+                displayName: "Lion 1"
+            },
+            lion2: {
+                splat: "hybrid_data/lion2.splat", 
+                mesh: "hybrid_data/lion2mesh.ply",
+                displayName: "Lion 2"
+            },
+            lion3: {
+                splat: "hybrid_data/lion3.splat", 
+                mesh: "hybrid_data/lion3mesh.ply",
+                displayName: "Lion 3"
+            }
+        };
+    }
+    
+    let currentScene = scenes['dtu_dtu-scan24'] ? 'dtu_dtu-scan24' : Object.keys(scenes)[0] || 'dtu_dtu-scan24';
     
     let carousel = true;
     const params = new URLSearchParams(location.search);
@@ -1131,6 +1161,15 @@ async function main() {
     showSplatsToggle.addEventListener("change", (e) => {
         showSplats = e.target.checked;
     });
+    
+    // Populate scene selector dropdown
+    sceneSelect.innerHTML = ''; // Clear existing options
+    for (const [key, sceneData] of Object.entries(scenes)) {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = sceneData.displayName || key;
+        sceneSelect.appendChild(option);
+    }
     
     sceneSelect.addEventListener("change", (e) => {
         loadScene(e.target.value);
@@ -1399,13 +1438,51 @@ async function main() {
             }
             
             // Load new mesh
+            const meshUrl = scenes[sceneName].mesh;
+            console.log("Attempting to load mesh from:", meshUrl);
+            console.log("Full resolved URL:", new URL(meshUrl, location.href).href);
+            
+            // Test if we can fetch the file directly and check size
+            try {
+                const testFetch = await fetch(meshUrl);
+                console.log("Mesh fetch test - Status:", testFetch.status);
+                const contentLength = testFetch.headers.get('content-length');
+                console.log("Mesh fetch test - Content-Length:", contentLength, "bytes");
+                console.log("Mesh fetch test - Content-Type:", testFetch.headers.get('content-type'));
+                
+                // Check if file is too large (Three.js might have limits)
+                if (contentLength) {
+                    const sizeMB = parseInt(contentLength) / (1024 * 1024);
+                    console.log(`Mesh file size: ${sizeMB.toFixed(2)} MB`);
+                    if (sizeMB > 100) {
+                        console.warn("Warning: Large mesh file may cause issues with PLYLoader");
+                    }
+                }
+                
+                // Actually read some of the content to verify it's not empty
+                const arrayBuffer = await testFetch.arrayBuffer();
+                console.log("Mesh fetch - actual bytes received:", arrayBuffer.byteLength);
+            } catch (err) {
+                console.error("Mesh fetch test failed:", err);
+            }
+            
             loader.load(
-                scenes[sceneName].mesh,
+                meshUrl,
                 (geometry) => {
-                    console.log("Loading mesh for", sceneName);
+                    console.log("Mesh loaded successfully for", sceneName);
+                    console.log("Geometry:", geometry);
+                    console.log("Attributes:", geometry.attributes);
+                    if (geometry.attributes.position) {
+                        console.log("Position count:", geometry.attributes.position.count);
+                    }
+                    if (geometry.index) {
+                        console.log("Index count:", geometry.index.count);
+                    }
                     setupMesh(geometry);
                 },
-                undefined,
+                (progress) => {
+                    console.log("Mesh loading progress:", progress);
+                },
                 (error) => {
                     console.error("Error loading mesh for", sceneName, ":", error);
                 }
@@ -1422,11 +1499,36 @@ async function main() {
     
     // Function to setup mesh (extracted from the original mesh loading code)
     function setupMesh(geometry) {
-            console.log("Loading mesh...");
-            console.log("Available attributes:", Object.keys(geometry.attributes));
+            console.log("setupMesh called");
+            console.log("Geometry:", geometry);
+            console.log("Available attributes:", geometry.attributes ? Object.keys(geometry.attributes) : "NO ATTRIBUTES");
+            
+            if (!geometry || !geometry.attributes) {
+                console.error("Mesh geometry is null or has no attributes");
+                return;
+            }
+            
+            // Log all attributes in detail
+            for (const [key, attr] of Object.entries(geometry.attributes)) {
+                console.log(`Attribute '${key}':`, {
+                    count: attr.count,
+                    itemSize: attr.itemSize,
+                    arrayLength: attr.array ? attr.array.length : 0,
+                    type: attr.array ? attr.array.constructor.name : 'no array'
+                });
+            }
+            
+            if (!geometry.attributes.position) {
+                console.error("Mesh geometry has no position attribute");
+                return;
+            }
             
             let positions = geometry.attributes.position.array;
+            console.log("Positions length:", positions.length);
+            
             let normals = geometry.attributes.normal ? geometry.attributes.normal.array : null;
+            console.log("Normals:", normals ? `${normals.length} values` : "none");
+            
             let colors = null;
             
             // Check for vertex colors - PLY files might have 'color' or individual 'red', 'green', 'blue' attributes
@@ -1460,7 +1562,7 @@ async function main() {
             let indices = geometry.index ? geometry.index.array : null;
             
             // Generate normals if none exist
-            if (!normals) {
+            if (!normals && indices) {
                 const triangleCount = indices.length / 3;
 
                 // Create expanded arrays for positions, colors, and normals
@@ -1666,6 +1768,23 @@ async function main() {
     
     // Initialize mesh loading after WebGL context is ready
     const loader = new PLYLoader();
+    
+    // Add logging to see what the loader is requesting
+    loader.manager.onStart = (url, itemsLoaded, itemsTotal) => {
+        console.log('Started loading:', url);
+    };
+    
+    loader.manager.onLoad = () => {
+        console.log('All loading complete');
+    };
+    
+    loader.manager.onProgress = (url, itemsLoaded, itemsTotal) => {
+        console.log('Loading progress:', url, itemsLoaded, '/', itemsTotal);
+    };
+    
+    loader.manager.onError = (url) => {
+        console.error('Error loading:', url);
+    };
     
     // Load initial scene
     loadScene(currentScene);
