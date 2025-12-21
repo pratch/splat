@@ -922,6 +922,48 @@ void main() {
 }
 `.trim();
 
+// Dilation shader for expanding visibility mask
+const dilationVertexShaderSource = `
+#version 300 es
+precision highp float;
+
+in vec2 aPosition;
+out vec2 vTexCoord;
+
+void main() {
+    vTexCoord = aPosition * 0.5 + 0.5;
+    gl_Position = vec4(aPosition, 0.0, 1.0);
+}
+`.trim();
+
+const dilationFragmentShaderSource = `
+#version 300 es
+precision highp float;
+
+in vec2 vTexCoord;
+out vec4 fragColor;
+
+uniform sampler2D uSourceTexture;
+uniform vec2 uTexelSize;
+uniform int uKernelSize;
+
+void main() {
+    float maxVisibility = 0.0;
+    int halfKernel = uKernelSize / 2;
+    
+    // Sample in a square kernel around the current pixel
+    for (int dy = -halfKernel; dy <= halfKernel; dy++) {
+        for (int dx = -halfKernel; dx <= halfKernel; dx++) {
+            vec2 offset = vec2(float(dx), float(dy)) * uTexelSize;
+            float sampleValue = texture(uSourceTexture, vTexCoord + offset).r;
+            maxVisibility = max(maxVisibility, sampleValue);
+        }
+    }
+    
+    fragColor = vec4(maxVisibility, 0.0, 0.0, 1.0);
+}
+`.trim();
+
 let defaultViewMatrix = [
     0.47, 0.04, 0.88, 0, -0.11, 0.99, 0.02, 0, -0.88, -0.11, 0.47, 0, 0.07,
     0.03, 6.55, 1,
@@ -1067,6 +1109,20 @@ async function main() {
         thresholdValueDisplay.textContent = edgeVisibilityThreshold.toFixed(2);
     });
 
+    // Add dilation control toggle
+    const enableDilationToggle = document.getElementById("enableDilation");
+    enableDilationToggle.addEventListener("change", (e) => {
+        enableDilation = e.target.checked;
+    });
+
+    // Add dilation kernel size control
+    const dilationKernelSizeSlider = document.getElementById("dilationKernelSize");
+    const dilationValueDisplay = document.getElementById("dilationValue");
+
+    dilationKernelSizeSlider.addEventListener("input", (e) => {
+        dilationKernelSize = parseInt(e.target.value);
+        dilationValueDisplay.textContent = dilationKernelSize;
+    });
 
     showMeshToggle.addEventListener("change", (e) => {
         showMesh = e.target.checked;
@@ -1095,6 +1151,10 @@ async function main() {
     let edgeVisibilityFramebuffer = gl.createFramebuffer();
     let edgeVisibilityDepthBuffer = gl.createRenderbuffer();
     let edgeVisibilityTextureFormat = null; // Track which format we're using
+    
+    // Create dilated visibility texture and framebuffer
+    let dilatedVisibilityTexture = gl.createTexture();
+    let dilatedVisibilityFramebuffer = gl.createFramebuffer();
     
     function setupEdgeVisibilityTexture() {
         const width = gl.canvas.width;
@@ -1140,6 +1200,28 @@ async function main() {
         }
         
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        
+        // Setup dilated visibility texture and framebuffer
+        gl.bindTexture(gl.TEXTURE_2D, dilatedVisibilityTexture);
+        const internalFormat = edgeVisibilityTextureFormat === 'RGBA_UBYTE' ? gl.RGBA : gl.R16F;
+        const format = edgeVisibilityTextureFormat === 'RGBA_UBYTE' ? gl.RGBA : gl.RED;
+        const type = edgeVisibilityTextureFormat === 'RGBA_UBYTE' ? gl.UNSIGNED_BYTE : gl.HALF_FLOAT;
+        
+        gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        
+        gl.bindFramebuffer(gl.FRAMEBUFFER, dilatedVisibilityFramebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dilatedVisibilityTexture, 0);
+        
+        const dilationStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        if (dilationStatus !== gl.FRAMEBUFFER_COMPLETE) {
+            console.error("Dilated visibility framebuffer not complete. Status:", dilationStatus);
+        }
+        
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
@@ -1162,10 +1244,61 @@ async function main() {
 
     const meshProgram = createProgram(gl, meshVertexShaderSource, meshFragmentShaderSource);
     const meshVisibilityProgram = createProgram(gl, meshVertexShaderSource, meshVisibilityFragmentShaderSource);
-
+    const dilationProgram = createProgram(gl, dilationVertexShaderSource, dilationFragmentShaderSource);
 
     if (!gl.getProgramParameter(program, gl.LINK_STATUS))
         console.error(gl.getProgramInfoLog(program));
+    
+    // Setup dilation program uniforms and geometry
+    const dilationPositionLocation = gl.getAttribLocation(dilationProgram, "aPosition");
+    const dilationSourceTextureLocation = gl.getUniformLocation(dilationProgram, "uSourceTexture");
+    const dilationTexelSizeLocation = gl.getUniformLocation(dilationProgram, "uTexelSize");
+    const dilationKernelSizeLocation = gl.getUniformLocation(dilationProgram, "uKernelSize");
+    
+    // Create fullscreen quad for dilation
+    const dilationQuadVertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+    const dilationQuadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, dilationQuadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, dilationQuadVertices, gl.STATIC_DRAW);
+    
+    const dilationVAO = gl.createVertexArray();
+    gl.bindVertexArray(dilationVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, dilationQuadBuffer);
+    gl.enableVertexAttribArray(dilationPositionLocation);
+    gl.vertexAttribPointer(dilationPositionLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+    
+    // Function to apply dilation to visibility texture
+    function applyDilation() {
+        if (!enableDilation) return;
+        
+        const width = gl.canvas.width;
+        const height = gl.canvas.height;
+        
+        gl.bindFramebuffer(gl.FRAMEBUFFER, dilatedVisibilityFramebuffer);
+        gl.viewport(0, 0, width, height);
+        
+        gl.disable(gl.DEPTH_TEST);
+        gl.disable(gl.BLEND);
+        
+        gl.useProgram(dilationProgram);
+        
+        // Bind source texture (edge visibility)
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, edgeVisibilityTexture);
+        gl.uniform1i(dilationSourceTextureLocation, 0);
+        
+        // Set uniforms
+        gl.uniform2f(dilationTexelSizeLocation, 1.0 / width, 1.0 / height);
+        gl.uniform1i(dilationKernelSizeLocation, dilationKernelSize);
+        
+        // Draw fullscreen quad
+        gl.bindVertexArray(dilationVAO);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.bindVertexArray(null);
+        
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
 
     gl.disable(gl.DEPTH_TEST); // Disable depth testing
 
@@ -1545,6 +1678,8 @@ async function main() {
     // Add edge visibility influence control (for GS culling - keeps GS at edges, removes on flat surfaces)
     let edgeVisibilityInfluence = 1.0; // 0.0 = no influence, 1.0 = full influence
     let edgeVisibilityThreshold = 0.1;
+    let enableDilation = true; // Enable dilation to expand visibility mask
+    let dilationKernelSize = 5; // Kernel size for dilation (odd number)
 
     const resize = () => {
         gl.uniform2fv(u_focal, new Float32Array([camera.fx, camera.fy]));
@@ -2112,6 +2247,9 @@ async function main() {
                 
                 gl.bindVertexArray(null);
                 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                
+                // Apply dilation to expand visibility mask
+                applyDilation();
             }
 
             // First/Second pass: Render scene (mesh + splats)
@@ -2238,9 +2376,10 @@ async function main() {
                 gl.useProgram(program);
                 gl.uniformMatrix4fv(u_view, false, actualViewMatrix);
 
-                // Bind edge visibility texture for GS culling
+                // Bind edge visibility texture for GS culling (use dilated version if enabled)
                 gl.activeTexture(gl.TEXTURE1);
-                gl.bindTexture(gl.TEXTURE_2D, edgeVisibilityTexture);
+                const visibilityTextureToUse = enableDilation ? dilatedVisibilityTexture : edgeVisibilityTexture;
+                gl.bindTexture(gl.TEXTURE_2D, visibilityTextureToUse);
                 gl.uniform1i(u_edgeVisibilityTexture, 1);
                 
                 // Set edge visibility influence
@@ -2291,7 +2430,7 @@ async function main() {
 
     frame();
 
-    setupVisibilityTexture();
+    setupEdgeVisibilityTexture();
 
     const isPly = (splatData) =>
         splatData[0] == 112 &&
