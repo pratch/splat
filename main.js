@@ -748,22 +748,26 @@ void main () {
     vec2 screenPos = (vec2(pos2d) / pos2d.w) * 0.5 + 0.5;
     float edgeVisibility = texture(u_edgeVisibilityTexture, screenPos).r;
 
-    // Hard cutoff for visibility below threshold (gradual fade in/out starting at 0.5 * threshold)
-    // Discard splats below hard cutoff
-    float hardCutoff = u_edgeVisibilityThreshold * 0.5; 
-    if (edgeVisibility < hardCutoff) {
-        gl_Position = vec4(0.0, 0.0, 2.0, 1.0); // Move outside clip space
-        return;
+    // Apply visibility only if influence > 0 (when visibility is enabled)
+    float alphaMultiplier = 1.0;
+    if (u_edgeVisibilityInfluence > 0.0) {
+        // Hard cutoff for visibility below threshold (gradual fade in/out starting at 0.5 * threshold)
+        // Discard splats below hard cutoff
+        float hardCutoff = u_edgeVisibilityThreshold * 0.5; 
+        if (edgeVisibility < hardCutoff) {
+            gl_Position = vec4(0.0, 0.0, 2.0, 1.0); // Move outside clip space
+            return;
+        }
+
+        // Smooth transition zone between hardCutoff and threshold 
+        float transitionFactor = smoothstep(hardCutoff, u_edgeVisibilityThreshold, edgeVisibility);
+
+        // Apply both edge visibility and transition factor to alpha
+        alphaMultiplier = edgeVisibility * transitionFactor;
+
+        // Clamp alphaMultiplier based on influence
+        alphaMultiplier = mix(1.0, alphaMultiplier, u_edgeVisibilityInfluence);
     }
-
-    // Smooth transition zone between hardCutoff and threshold 
-    float transitionFactor = smoothstep(hardCutoff, u_edgeVisibilityThreshold, edgeVisibility);
-
-    // Apply both edge visibility and transition factor to alpha
-    float alphaMultiplier = edgeVisibility * transitionFactor;
-
-    // Clamp alphaMultiplier based on influence
-    alphaMultiplier = mix(1.0, alphaMultiplier, u_edgeVisibilityInfluence);
 
     // Apply alpha multiplier to original alpha
     float originalAlpha = float((cov.w >> 24) & 0xffu) / 255.0;
@@ -844,34 +848,20 @@ void main() {
 
 const meshFragmentShaderSource = `
 #version 300 es
-precision mediump float;
+precision highp float;
 
 flat in vec3 vNormal;
 in vec3 vColor;
 in vec3 vWorldPos;
 uniform vec3 uCameraPos;  // camera world-space position
 uniform int uVisualizationMode; // 0: vertex color, 1: normals, 2: visibility score
+uniform sampler2D uDilatedVisibilityTexture;  // Dilated visibility texture
+uniform highp mat4 uProjectionMatrix;
+uniform highp mat4 uViewMatrix;
 
 out vec4 fragColor;
 
 void main() {
-    // vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    // float diff = max(dot(normalize(vNormal), lightDir), 0.0);
-    
-    // // Combine vertex color with lighting
-    // // vec3 diffuseColor = vColor * diff;
-    // // vec3 ambientColor = vColor * 0.3; // ambient lighting
-    // // vec3 finalColor = diffuseColor + ambientColor;
-
-    // // vec3 finalColor = vColor;
-    // // vec3 finalColor = normalize(vNormal) * 0.5 + 0.5; // visualize normals as color
-    // // vec3 finalColor = normalize(uCameraPos - vWorldPos) * 0.5 + 0.5; // visualize view direction as color
-
-    // vec3 viewdir = normalize(uCameraPos - vWorldPos);
-    // float norm_v_cross_n = length(cross(viewdir, normalize(vNormal)));
-    // float visibility = exp(-100.0 * (norm_v_cross_n-1.0) * (norm_v_cross_n-1.0));
-    // vec3 finalColor = vec3(visibility); 
-
     vec3 finalColor;
 
     if (uVisualizationMode == 0) {
@@ -881,19 +871,18 @@ void main() {
         // Normals as color
         finalColor = normalize(vNormal) * 0.5 + 0.5;
     } else if (uVisualizationMode == 2) {
-        // Visibility score
-        vec3 viewdir = normalize(uCameraPos - vWorldPos);
-        float norm_v_cross_n = length(cross(viewdir, normalize(vNormal)));
-        float visibility = exp(-100.0 * (norm_v_cross_n-1.0) * (norm_v_cross_n-1.0));
+        // Visibility score - sample from dilated visibility texture
+        vec4 clipPos = uProjectionMatrix * uViewMatrix * vec4(vWorldPos, 1.0);
+        vec2 screenPos = (clipPos.xy / clipPos.w) * 0.5 + 0.5;
+        float visibility = texture(uDilatedVisibilityTexture, screenPos).r;
         finalColor = vec3(visibility);
     } else if (uVisualizationMode == 3) {
-        // Normals as color
-        finalColor = vec3(1.0, 0.0, 0.0); // Red
+        // Red for debugging
+        finalColor = vec3(1.0, 0.0, 0.0);
     } else {
         // Default fallback
         finalColor = vColor;
     }
-    
     
     fragColor = vec4(finalColor, 1.0);
 }
@@ -1152,6 +1141,26 @@ async function main() {
     dilationKernelSizeSlider.addEventListener("input", (e) => {
         dilationKernelSize = parseInt(e.target.value);
         dilationValueDisplay.textContent = dilationKernelSize;
+    });
+
+    // Add visibility enable/disable toggle
+    const enableVisibilityToggle = document.getElementById("enableVisibility");
+    enableVisibilityToggle.addEventListener("change", (e) => {
+        enableVisibility = e.target.checked;
+        // Gray out visibility controls when disabled
+        edgeVisibilityInfluenceSlider.disabled = !enableVisibility;
+        edgeVisibilityThresholdSlider.disabled = !enableVisibility;
+        if (!enableVisibility) {
+            edgeVisibilityInfluenceSlider.style.opacity = "0.5";
+            edgeVisibilityThresholdSlider.style.opacity = "0.5";
+            edgeVisibilityValueDisplay.style.opacity = "0.5";
+            thresholdValueDisplay.style.opacity = "0.5";
+        } else {
+            edgeVisibilityInfluenceSlider.style.opacity = "1";
+            edgeVisibilityThresholdSlider.style.opacity = "1";
+            edgeVisibilityValueDisplay.style.opacity = "1";
+            thresholdValueDisplay.style.opacity = "1";
+        }
     });
 
     showMeshToggle.addEventListener("change", (e) => {
@@ -1662,7 +1671,8 @@ async function main() {
             const u_meshView = gl.getUniformLocation(meshProgram, "uViewMatrix");
             const u_meshModel = gl.getUniformLocation(meshProgram, "uModelMatrix");
             const u_meshCameraPos = gl.getUniformLocation(meshProgram, "uCameraPos");
-            const u_meshVisualizationMode = gl.getUniformLocation(meshProgram, "uVisualizationMode"); 
+            const u_meshVisualizationMode = gl.getUniformLocation(meshProgram, "uVisualizationMode");
+            const u_meshDilatedVisibilityTexture = gl.getUniformLocation(meshProgram, "uDilatedVisibilityTexture"); 
 
             // Get uniform locations for visibility program
             const u_meshVisibilityProjection = gl.getUniformLocation(meshVisibilityProgram, "uProjectionMatrix");
@@ -1753,7 +1763,8 @@ async function main() {
                     view: u_meshView,
                     model: u_meshModel,
                     cameraPos: u_meshCameraPos,
-                    visualizationMode: u_meshVisualizationMode
+                    visualizationMode: u_meshVisualizationMode,
+                    dilatedVisibilityTexture: u_meshDilatedVisibilityTexture
                 },
                 visibilityUniforms: {
                     projection: u_meshVisibilityProjection,
@@ -1798,6 +1809,7 @@ async function main() {
     let edgeVisibilityInfluence = 1.0; // 0.0 = no influence, 1.0 = full influence
     let edgeVisibilityThreshold = 0.1;
     let enableDilation = true; // Enable dilation to expand visibility mask
+    let enableVisibility = true; // Enable/disable visibility mechanism completely
     let dilationKernelSize = 5; // Kernel size for dilation (odd number)
 
     const resize = () => {
@@ -2406,6 +2418,13 @@ async function main() {
                 // Pass visualization mode to shader
                 gl.uniform1i(meshData.uniforms.visualizationMode, meshVisualizationMode);
                 
+                // Bind dilated visibility texture for visualization mode 2
+                if (meshVisualizationMode === 2) {
+                    gl.activeTexture(gl.TEXTURE2);
+                    gl.bindTexture(gl.TEXTURE_2D, dilatedVisibilityTexture);
+                    gl.uniform1i(meshData.uniforms.dilatedVisibilityTexture, 2);
+                }
+                
                 // Use mesh VAO
                 gl.bindVertexArray(meshData.vao);
                 
@@ -2426,53 +2445,58 @@ async function main() {
                 if (frameCount % 30 === 0 && meshData) {
                     totalGaussianCount = vertexCount;
                     
-                    // Read edge visibility texture - use full resolution for accurate counting
-                    const visWidth = gl.canvas.width;
-                    const visHeight = gl.canvas.height;
-                    
-                    // Read based on the actual texture format
-                    let visPixels;
-                    gl.bindFramebuffer(gl.FRAMEBUFFER, edgeVisibilityFramebuffer);
-                    
-                    if (edgeVisibilityTextureFormat === 'RGBA_UBYTE') {
-                        // Read as UNSIGNED_BYTE and convert to float
-                        const visPixelsBytes = new Uint8Array(visWidth * visHeight * 4);
-                        gl.readPixels(0, 0, visWidth, visHeight, gl.RGBA, gl.UNSIGNED_BYTE, visPixelsBytes);
-                        
-                        // Convert to float
-                        visPixels = new Float32Array(visPixelsBytes.length);
-                        for (let i = 0; i < visPixelsBytes.length; i++) {
-                            visPixels[i] = visPixelsBytes[i] / 255.0;
-                        }
+                    // If visibility is disabled, all Gaussians are visible
+                    if (!enableVisibility) {
+                        visibleGaussianCount = vertexCount;
                     } else {
-                        // Try reading as float (R16F format)
-                        visPixels = new Float32Array(visWidth * visHeight * 4);
-                        gl.readPixels(0, 0, visWidth, visHeight, gl.RGBA, gl.FLOAT, visPixels);
-                    }
-                    
-                    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-                    
-                    // Count pixels above edge visibility threshold
-                    let visiblePixels = 0;
-                    let totalMeshPixels = 0;
-                    
-                    for (let i = 0; i < visPixels.length; i += 4) {
-                        const edgeVis = visPixels[i];
-                        if (edgeVis > 0.001) { // Mesh exists at this pixel
-                            totalMeshPixels++;
-                            if (edgeVis >= edgeVisibilityThreshold) {
-                                visiblePixels++;
+                        // Read edge visibility texture - use full resolution for accurate counting
+                        const visWidth = gl.canvas.width;
+                        const visHeight = gl.canvas.height;
+                        
+                        // Read based on the actual texture format
+                        let visPixels;
+                        gl.bindFramebuffer(gl.FRAMEBUFFER, edgeVisibilityFramebuffer);
+                        
+                        if (edgeVisibilityTextureFormat === 'RGBA_UBYTE') {
+                            // Read as UNSIGNED_BYTE and convert to float
+                            const visPixelsBytes = new Uint8Array(visWidth * visHeight * 4);
+                            gl.readPixels(0, 0, visWidth, visHeight, gl.RGBA, gl.UNSIGNED_BYTE, visPixelsBytes);
+                            
+                            // Convert to float
+                            visPixels = new Float32Array(visPixelsBytes.length);
+                            for (let i = 0; i < visPixelsBytes.length; i++) {
+                                visPixels[i] = visPixelsBytes[i] / 255.0;
+                            }
+                        } else {
+                            // Try reading as float (R16F format)
+                            visPixels = new Float32Array(visWidth * visHeight * 4);
+                            gl.readPixels(0, 0, visWidth, visHeight, gl.RGBA, gl.FLOAT, visPixels);
+                        }
+                        
+                        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                        
+                        // Count pixels above edge visibility threshold
+                        let visiblePixels = 0;
+                        let totalMeshPixels = 0;
+                        
+                        for (let i = 0; i < visPixels.length; i += 4) {
+                            const edgeVis = visPixels[i];
+                            if (edgeVis > 0.001) { // Mesh exists at this pixel
+                                totalMeshPixels++;
+                                if (edgeVis >= edgeVisibilityThreshold) {
+                                    visiblePixels++;
+                                }
                             }
                         }
-                    }
-                    
-                    // Estimate visible Gaussians based on pixel ratio
-                    if (totalMeshPixels > 0) {
-                        const visibleRatio = visiblePixels / totalMeshPixels;
-                        visibleGaussianCount = Math.round(vertexCount * visibleRatio);
-                    } else {
-                        // No mesh visible - either all GS visible or use last known count
-                        visibleGaussianCount = vertexCount;
+                        
+                        // Estimate visible Gaussians based on pixel ratio
+                        if (totalMeshPixels > 0) {
+                            const visibleRatio = visiblePixels / totalMeshPixels;
+                            visibleGaussianCount = Math.round(vertexCount * visibleRatio);
+                        } else {
+                            // No mesh visible - either all GS visible or use last known count
+                            visibleGaussianCount = vertexCount;
+                        }
                     }
                 }
                 
@@ -2501,8 +2525,8 @@ async function main() {
                 gl.bindTexture(gl.TEXTURE_2D, visibilityTextureToUse);
                 gl.uniform1i(u_edgeVisibilityTexture, 1);
                 
-                // Set edge visibility influence
-                gl.uniform1f(u_edgeVisibilityInfluence, edgeVisibilityInfluence);
+                // Set edge visibility influence (0 when disabled to skip visibility logic)
+                gl.uniform1f(u_edgeVisibilityInfluence, enableVisibility ? edgeVisibilityInfluence : 0.0);
 
                 // Set edge visibility threshold
                 gl.uniform1f(u_edgeVisibilityThreshold, edgeVisibilityThreshold);
